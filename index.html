@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsApp Bot Demo</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #d1d7db;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 16px;
+  }
+
+  .phone {
+    width: 100%;
+    max-width: 420px;
+    height: min(820px, calc(100vh - 32px));
+    background: #efeae2;
+    border-radius: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    position: relative;
+  }
+
+  /* Header */
+  .header {
+    background: #075e54;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    flex-shrink: 0;
+  }
+  .header .back { font-size: 20px; opacity: 0.9; }
+  .avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #f6a5c0, #c56cf0);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .header .info { flex: 1; min-width: 0; }
+  .header .name { font-weight: 600; font-size: 16px; }
+  .header .status { font-size: 12px; opacity: 0.85; }
+  .header .icons { display: flex; gap: 18px; font-size: 18px; opacity: 0.9; }
+
+  /* Chat area */
+  .chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background-color: #efeae2;
+    background-image:
+      radial-gradient(circle at 20% 30%, rgba(0,0,0,0.025) 0 2px, transparent 3px),
+      radial-gradient(circle at 70% 60%, rgba(0,0,0,0.025) 0 2px, transparent 3px),
+      radial-gradient(circle at 40% 80%, rgba(0,0,0,0.02) 0 1.5px, transparent 2.5px);
+    background-size: 60px 60px, 90px 90px, 45px 45px;
+  }
+
+  .day-divider {
+    align-self: center;
+    background: #fff;
+    color: #54656f;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    margin: 6px 0 10px;
+    box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+  }
+
+  .notice {
+    align-self: center;
+    background: #fdf5c9;
+    color: #54656f;
+    font-size: 12px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    margin: 4px 0 10px;
+    text-align: center;
+    max-width: 90%;
+    box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+  }
+
+  .msg {
+    max-width: 80%;
+    padding: 6px 8px 6px 9px;
+    border-radius: 8px;
+    font-size: 14.2px;
+    line-height: 19px;
+    position: relative;
+    box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    animation: pop 0.15s ease-out;
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .msg.out {
+    align-self: flex-end;
+    background: #d9fdd3;
+    border-top-right-radius: 0;
+  }
+  .msg.out::before {
+    content: "";
+    position: absolute;
+    top: 0; right: -8px;
+    border-width: 0 0 10px 8px;
+    border-style: solid;
+    border-color: transparent transparent transparent #d9fdd3;
+  }
+
+  .msg.in {
+    align-self: flex-start;
+    background: #fff;
+    border-top-left-radius: 0;
+  }
+  .msg.in::before {
+    content: "";
+    position: absolute;
+    top: 0; left: -8px;
+    border-width: 0 8px 10px 0;
+    border-style: solid;
+    border-color: transparent #fff transparent transparent;
+  }
+
+  .msg .meta {
+    float: right;
+    margin: 6px 0 -4px 10px;
+    font-size: 11px;
+    color: #667781;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+  .msg .meta .ticks { color: #53bdeb; font-size: 12px; letter-spacing: -3px; }
+
+  .msg.error {
+    background: #fde8e8;
+    color: #7a1f1f;
+  }
+
+  /* Typing indicator */
+  .typing {
+    align-self: flex-start;
+    background: #fff;
+    border-radius: 8px;
+    border-top-left-radius: 0;
+    padding: 10px 14px;
+    display: flex;
+    gap: 4px;
+    box-shadow: 0 1px 0.5px rgba(0,0,0,0.13);
+    animation: pop 0.15s ease-out;
+  }
+  .typing span {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #8696a0;
+    animation: bounce 1.2s infinite ease-in-out;
+  }
+  .typing span:nth-child(2) { animation-delay: 0.2s; }
+  .typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-5px); opacity: 1; }
+  }
+
+  /* Composer */
+  .composer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #f0f2f5;
+    flex-shrink: 0;
+  }
+  .composer .emoji { font-size: 22px; color: #54656f; padding: 0 4px; }
+  .composer input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: #fff;
+    border-radius: 22px;
+    padding: 11px 14px;
+    font-size: 15px;
+    min-width: 0;
+  }
+  .composer button {
+    width: 44px; height: 44px;
+    border: none;
+    border-radius: 50%;
+    background: #00a884;
+    color: #fff;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .composer button:hover { background: #008f70; }
+  .composer button:active { transform: scale(0.94); }
+  .composer button:disabled { background: #a5c9bf; cursor: not-allowed; }
+  .composer button svg { width: 22px; height: 22px; fill: currentColor; margin-left: 2px; }
+
+  /* Footer / debug strip */
+  .footer {
+    font-size: 11px;
+    color: #54656f;
+    text-align: center;
+    padding: 6px 10px;
+    background: #f0f2f5;
+    border-top: 1px solid #e0e3e6;
+    flex-shrink: 0;
+  }
+  .footer b { color: #075e54; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="header">
+    <span class="back">‹</span>
+    <div class="avatar">💇‍♀️</div>
+    <div class="info">
+      <div class="name">Glow &amp; Go Salon</div>
+      <div class="status" id="status">online</div>
+    </div>
+    <div class="icons"><span>📹</span><span>📞</span><span>⋮</span></div>
+  </div>
+
+  <div class="chat" id="chat">
+    <div class="day-divider">Today</div>
+    <div class="notice">🔒 Messages are end-to-end encrypted. This is a demo conversation with the salon's WhatsApp bot.</div>
+  </div>
+
+  <form class="composer" id="form" autocomplete="off">
+    <span class="emoji">😊</span>
+    <input type="text" id="input" placeholder="Type a message" maxlength="1000">
+    <button type="submit" id="send" aria-label="Send">
+      <svg viewBox="0 0 24 24"><path d="M1.101 21.757 23.8 12.028 1.101 2.3l.011 7.912 13.623 1.816-13.623 1.817-.011 7.912z"/></svg>
+    </button>
+  </form>
+
+  <div class="footer">Customer: <b>+92 319 9999999</b> · Mock API: <b>whap-mock.onrender.com</b></div>
+</div>
+
+<script>
+  const API_BASE        = 'https://whap-mock.onrender.com';
+  const SIMULATE_URL    = `${API_BASE}/mock/simulate-message`;
+  const MESSAGES_URL    = `${API_BASE}/v22.0/123456789/messages`;
+  const PHONE_NUMBER_ID = '123456789';       // salon's WhatsApp Business number ID
+  const CUSTOMER_PHONE  = '923199999999';    // fixed demo customer
+  const POLL_INTERVAL   = 2000;              // ms
+  const REPLY_TIMEOUT   = 15000;             // ms
+
+  const chat   = document.getElementById('chat');
+  const form   = document.getElementById('form');
+  const input  = document.getElementById('input');
+  const send   = document.getElementById('send');
+  const status = document.getElementById('status');
+
+  let lastMessageCount = 0;   // baseline for "new reply" detection
+  let busy = false;
+
+  // ---------- UI helpers ----------
+  function timeNow() {
+    return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function scrollToBottom() {
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function addBubble(text, dir, opts = {}) {
+    const el = document.createElement('div');
+    el.className = `msg ${dir}${opts.error ? ' error' : ''}`;
+    el.textContent = text;
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.innerHTML = `${timeNow()}${dir === 'out' ? ' <span class="ticks">✓✓</span>' : ''}`;
+    el.appendChild(meta);
+
+    chat.appendChild(el);
+    scrollToBottom();
+    return el;
+  }
+
+  let typingEl = null;
+  function showTyping() {
+    if (typingEl) return;
+    typingEl = document.createElement('div');
+    typingEl.className = 'typing';
+    typingEl.innerHTML = '<span></span><span></span><span></span>';
+    chat.appendChild(typingEl);
+    status.textContent = 'typing…';
+    scrollToBottom();
+  }
+  function hideTyping() {
+    if (typingEl) { typingEl.remove(); typingEl = null; }
+    status.textContent = 'online';
+  }
+
+  function setBusy(v) {
+    busy = v;
+    send.disabled = v;
+  }
+
+  // ---------- API ----------
+  async function fetchMessages() {
+    const res = await fetch(MESSAGES_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`GET messages → HTTP ${res.status}`);
+    const json = await res.json();
+    return Array.isArray(json.data) ? json.data : [];
+  }
+
+  function extractText(m) {
+    // Mock returns { content: { text: { body } } }; be tolerant of other shapes.
+    return m?.content?.text?.body
+        ?? m?.text?.body
+        ?? m?.content?.interactive?.body?.text
+        ?? (typeof m?.content === 'string' ? m.content : null)
+        ?? JSON.stringify(m?.content ?? m);
+  }
+
+  async function simulateInbound(text) {
+    const ts = Date.now();
+    const payload = {
+      to:   PHONE_NUMBER_ID,
+      from: CUSTOMER_PHONE,
+      message: {
+        id:        `wamid.demo.${ts}.${Math.random().toString(36).slice(2, 8)}`,
+        timestamp: String(Math.floor(ts / 1000)),
+        type:      'text',
+        text:      { body: text }
+      }
+    };
+    const res = await fetch(SIMULATE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.json())?.error?.message ?? ''; } catch {}
+      throw new Error(`POST simulate-message → HTTP ${res.status}${detail ? ': ' + detail : ''}`);
+    }
+    return res.json();
+  }
+
+  // Poll until data.length grows past baseline, or timeout.
+  function waitForReply(baseline) {
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      const tick = async () => {
+        try {
+          const msgs = await fetchMessages();
+          if (msgs.length > baseline) {
+            lastMessageCount = msgs.length;
+            return resolve(msgs.slice(baseline));   // all new messages
+          }
+        } catch (err) {
+          console.warn('[poll]', err.message);       // transient; keep polling
+        }
+        if (Date.now() - started >= REPLY_TIMEOUT) return reject(new Error('timeout'));
+        setTimeout(tick, POLL_INTERVAL);
+      };
+      tick();
+    });
+  }
+
+  // ---------- Flow ----------
+  async function handleSend(text) {
+    setBusy(true);
+    addBubble(text, 'out');
+
+    try {
+      // Snapshot count BEFORE posting so a fast reply can't be missed.
+      try { lastMessageCount = (await fetchMessages()).length; } catch {}
+      const baseline = lastMessageCount;
+
+      await simulateInbound(text);
+      showTyping();
+
+      const replies = await waitForReply(baseline);
+      hideTyping();
+      for (const m of replies) {
+        addBubble(extractText(m), 'in');
+      }
+    } catch (err) {
+      hideTyping();
+      if (err.message === 'timeout') {
+        addBubble('⏱ No reply from the bot within 15 seconds. It may be busy or the webhook is down — try sending again.', 'in', { error: true });
+      } else {
+        addBubble(`⚠️ ${err.message}`, 'in', { error: true });
+      }
+    } finally {
+      setBusy(false);
+      input.focus();
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text || busy) return;
+    input.value = '';
+    handleSend(text);
+  });
+
+  // Establish baseline on load so old messages aren't shown as "new".
+  (async () => {
+    try {
+      lastMessageCount = (await fetchMessages()).length;
+      status.textContent = 'online';
+    } catch (err) {
+      status.textContent = 'connecting…';
+      console.warn('[init]', err.message);
+    }
+    input.focus();
+  })();
+</script>
+</body>
+</html>
