@@ -4,3 +4,4 @@ workers_dev = true
 
 [assets]
 directory = "./public"
+html_handling = "auto-trailing-slash"
