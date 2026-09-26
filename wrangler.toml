@@ -1,0 +1,6 @@
+name = "salon-ui-chatbot"
+compatibility_date = "2025-07-18"
+workers_dev = true
+
+[assets]
+directory = "./public"

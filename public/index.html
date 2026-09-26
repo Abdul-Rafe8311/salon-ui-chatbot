@@ -283,251 +283,190 @@
   </form>
 
   <div class="composer-hint" id="hint"></div>
-  <div class="footer">Customer: <b id="footer-phone"></b> · Mock API: <b>whap-mock.onrender.com</b></div>
+  <div class="footer">Customer: <b id="footer-phone"></b> · Backend: <b id="backend-host"></b></div>
 </div>
 
 <script>
-  const API_BASE        = 'https://whap-mock.onrender.com';
-  const SIMULATE_URL    = `${API_BASE}/mock/simulate-message`;
-  const MESSAGES_URL    = `${API_BASE}/v22.0/123456789/messages`;
-  const PHONE_NUMBER_ID = '123456789';       // salon's WhatsApp Business number ID
-  const POLL_INTERVAL   = 2000;              // ms
-  const REPLY_TIMEOUT   = 45000;             // ms — Render cold starts can push a reply past 15s
-  const SLOW_NOTICE_AT  = 12000;             // ms — after this, tell the user we're still waiting
+  const API_BASE = (new URLSearchParams(location.search).get("api")
+    || "https://whatsapp-salon-bot.abdul-rafe8311.workers.dev").replace(/\/+$/, "");
+  const REPLY_TIMEOUT = 30000;
+  const SLOW_NOTICE_AT = 12000;
+  const PINNED_PHONE = new URLSearchParams(location.search).get("phone");
 
-  // The bot locks a customer number for good after TURN_LIMIT (12) turns
-  // ("session locked, reason: turn_limit"), so a single hard-coded number
-  // burns out after one long demo. Default to a fresh number per conversation;
-  // pin one with ?phone=9231XXXXXXX when you want bookings under a known customer.
-  const PINNED_PHONE = new URLSearchParams(location.search).get('phone');
   let CUSTOMER_PHONE = PINNED_PHONE || freshPhone();
+  let SESSION_ID = sessionFor(CUSTOMER_PHONE);
+  let conversationEpoch = 0;
+  let pendingRequests = 0;
+  let handedOff = false;
 
   function freshPhone() {
-    // 92 319 9xx xxxx — same prefix family as the original demo number
-    return '923199' + String(Math.floor(Math.random() * 1e6)).padStart(6, '0');
+    return "923199" + String(Math.floor(Math.random() * 1e6)).padStart(6, "0");
   }
-  function prettyPhone(p) {
-    return `+${p.slice(0,2)} ${p.slice(2,5)} ${p.slice(5)}`;
+  function sessionFor(phone) {
+    return "glow-go-demo-" + phone;
+  }
+  function prettyPhone(phone) {
+    return "+" + phone.slice(0, 2) + " " + phone.slice(2, 5) + " " + phone.slice(5);
   }
 
-  const chat   = document.getElementById('chat');
-  const form   = document.getElementById('form');
-  const input  = document.getElementById('input');
-  const send   = document.getElementById('send');
-  const status = document.getElementById('status');
-  const hint   = document.getElementById('hint');
-  const footerPhone = document.getElementById('footer-phone');
+  const chat = document.getElementById("chat");
+  const form = document.getElementById("form");
+  const input = document.getElementById("input");
+  const status = document.getElementById("status");
+  const hint = document.getElementById("hint");
+  const footerPhone = document.getElementById("footer-phone");
+  document.getElementById("backend-host").textContent = new URL(API_BASE).host;
 
-  // Phrases the bot uses when it hands off to a human and locks the session.
   const HANDOFF_RE = /front desk|passing this to our team|passed your (request|message|payment)/i;
-
-  let baseline = 0;           // count of replies addressed to CUSTOMER_PHONE we've already seen
-  let waiting  = false;       // a message is in flight
-  let handedOff = false;      // bot locked this number
-  const queue = [];           // { text, el } waiting to be sent
-
-  // ---------- UI helpers ----------
-  const timeNow = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const scrollToBottom = () => { chat.scrollTop = chat.scrollHeight; };
 
   function addBubble(text, dir, opts = {}) {
-    const el = document.createElement('div');
-    el.className = `msg ${dir}${opts.error ? ' error' : ''}`;
+    const el = document.createElement("div");
+    el.className = "msg " + dir + (opts.error ? " error" : "");
     el.textContent = text;
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    meta.innerHTML = timeNow() + (dir === 'out' ? ' <span class="ticks pending" title="Queued">🕓</span>' : '');
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.innerHTML = timeNow() + (dir === "out" ? ' <span class="ticks pending" title="Sending">🕓</span>' : "");
     el.appendChild(meta);
     chat.appendChild(el);
     scrollToBottom();
     return el;
   }
   function addSystem(text) {
-    const el = document.createElement('div');
-    el.className = 'msg system';
+    const el = document.createElement("div");
+    el.className = "msg system";
     el.textContent = text;
     chat.appendChild(el);
     scrollToBottom();
   }
   function setTicks(el, state, title) {
-    const t = el.querySelector('.ticks');
-    if (!t) return;
-    t.className = `ticks ${state}`;
-    t.title = title || '';
-    t.textContent = state === 'pending' ? '🕓' : state === 'failed' ? '!' : '✓✓';
+    const ticks = el.querySelector(".ticks");
+    if (!ticks) return;
+    ticks.className = "ticks " + state;
+    ticks.title = title || "";
+    ticks.textContent = state === "pending" ? "🕓" : state === "failed" ? "!" : "✓✓";
   }
 
-  let typingEl = null, slowTimer = null;
+  let typingEl = null;
+  let slowTimer = null;
   function showTyping() {
     if (typingEl) return;
-    typingEl = document.createElement('div');
-    typingEl.className = 'typing';
-    typingEl.innerHTML = '<span></span><span></span><span></span>';
+    typingEl = document.createElement("div");
+    typingEl.className = "typing";
+    typingEl.innerHTML = "<span></span><span></span><span></span>";
     chat.appendChild(typingEl);
-    status.textContent = 'typing…';
+    status.textContent = "typing…";
     scrollToBottom();
     slowTimer = setTimeout(() => {
       if (!typingEl) return;
-      const n = document.createElement('span');
-      n.className = 'wait-note';
-      n.textContent = 'still waiting… (bot can take up to 45s to wake up)';
-      typingEl.appendChild(n);
-      status.textContent = 'still waiting…';
+      const note = document.createElement("span");
+      note.className = "wait-note";
+      note.textContent = "still waiting… (the bot can take up to 25 seconds)";
+      typingEl.appendChild(note);
+      status.textContent = "still waiting…";
       scrollToBottom();
     }, SLOW_NOTICE_AT);
   }
   function hideTyping() {
     clearTimeout(slowTimer);
-    if (typingEl) { typingEl.remove(); typingEl = null; }
-    status.textContent = 'online';
-  }
-
-  function updateHint() {
-    if (handedOff) { hint.textContent = 'Bot handed this conversation to staff — start a new chat to continue the demo.'; return; }
-    if (!waiting)  { hint.textContent = ''; return; }
-    hint.textContent = queue.length
-      ? `Waiting for reply · ${queue.length} message${queue.length > 1 ? 's' : ''} queued (sent in order)`
-      : 'Waiting for the bot to reply… you can keep typing';
-  }
-
-  // ---------- API ----------
-  async function fetchMine() {
-    const res = await fetch(MESSAGES_URL, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`GET messages → HTTP ${res.status}`);
-    const json = await res.json();
-    // The mock log is global; only look at messages addressed to *our* customer.
-    return (Array.isArray(json.data) ? json.data : []).filter(m => String(m.to) === CUSTOMER_PHONE);
-  }
-
-  function extractText(m) {
-    return m?.content?.text?.body
-        ?? m?.text?.body
-        ?? m?.content?.interactive?.body?.text
-        ?? (typeof m?.content === 'string' ? m.content : null)
-        ?? JSON.stringify(m?.content ?? m);
-  }
-
-  async function simulateInbound(text) {
-    const ts = Date.now();
-    const payload = {
-      to:   PHONE_NUMBER_ID,
-      from: CUSTOMER_PHONE,
-      message: {
-        id:        `wamid.demo.${ts}.${Math.random().toString(36).slice(2, 8)}`,
-        timestamp: String(Math.floor(ts / 1000)),
-        type:      'text',
-        text:      { body: text }
-      }
-    };
-    const res = await fetch(SIMULATE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) {
-      let detail = '';
-      try { detail = (await res.json())?.error?.message ?? ''; } catch {}
-      throw new Error(`POST simulate-message → HTTP ${res.status}${detail ? ': ' + detail : ''}`);
+    if (typingEl) {
+      typingEl.remove();
+      typingEl = null;
     }
-    return res.json();
+    status.textContent = "online";
+  }
+  function updateHint() {
+    if (handedOff) {
+      hint.textContent = "Bot handed this conversation to staff — start a new chat to continue the demo.";
+    } else if (!pendingRequests) {
+      hint.textContent = "";
+    } else {
+      hint.textContent = "Waiting for the bot to reply… new messages sent now can join this turn.";
+    }
   }
 
-  // Poll until more replies to our number exist than `base`, or timeout.
-  function waitForReply(base) {
-    return new Promise((resolve, reject) => {
-      const started = Date.now();
-      const tick = async () => {
-        try {
-          const mine = await fetchMine();
-          if (mine.length < base) base = mine.length;          // mock log was reset mid-wait
-          if (mine.length > base) {
-            baseline = mine.length;
-            return resolve(mine.slice(base));
-          }
-        } catch (err) {
-          console.warn('[poll]', err.message);
-        }
-        if (Date.now() - started >= REPLY_TIMEOUT) return reject(new Error('timeout'));
-        setTimeout(tick, POLL_INTERVAL);
-      };
-      tick();
-    });
-  }
-
-  // ---------- Flow ----------
-  async function processQueue() {
-    if (waiting || !queue.length) return;
-    waiting = true;
+  async function sendToWorker(text, bubble, epoch, sessionId) {
+    pendingRequests += 1;
     updateHint();
-    const { text, el } = queue.shift();
-    updateHint();
+    showTyping();
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REPLY_TIMEOUT);
     try {
-      try { baseline = (await fetchMine()).length; } catch {}
-      const base = baseline;
+      const response = await fetch(API_BASE + "/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, session_id: sessionId }),
+        signal: controller.signal
+      });
+      let data = {};
+      try { data = await response.json(); } catch {}
+      if (!response.ok) {
+        throw new Error("POST /api/chat → HTTP " + response.status + (data.error ? ": " + data.error : ""));
+      }
+      setTicks(bubble, "sent", "Delivered to the booking bot");
 
-      await simulateInbound(text);
-      setTicks(el, 'sent', 'Delivered to bot');
-      showTyping();
+      // A 202 means another request owns the shared turn. This message has
+      // joined its buffer; the owner will show the one merged reply.
+      if (data.pending) return;
+      if (epoch !== conversationEpoch) return;
 
-      const replies = await waitForReply(base);
-      hideTyping();
-      for (const m of replies) {
-        const body = extractText(m);
-        addBubble(body, 'in');
-        if (HANDOFF_RE.test(body)) {
+      if (data.session_id) SESSION_ID = data.session_id;
+      if (typeof data.reply === "string" && data.reply) {
+        addBubble(data.reply, "in");
+        if (HANDOFF_RE.test(data.reply)) {
           handedOff = true;
-          addSystem('The bot has handed this conversation to a human and will stay silent for this number from now on. Press "↻ New chat" to demo again with a fresh customer.');
+          addSystem('The bot has handed this conversation to a human and will stay silent. Press "↻ New chat" to demo again.');
         }
       }
-    } catch (err) {
-      hideTyping();
-      if (err.message === 'timeout') {
-        addBubble(`⏱ No reply after ${REPLY_TIMEOUT / 1000}s. The message reached the API, but the bot didn't answer — it may be locked for this number (hand-off / turn limit) or the backend is down. Try "↻ New chat".`, 'in', { error: true });
-      } else {
-        setTicks(el, 'failed', err.message);
-        addBubble(`⚠️ ${err.message}`, 'in', { error: true });
-      }
+    } catch (error) {
+      if (epoch !== conversationEpoch) return;
+      const message = error.name === "AbortError"
+        ? "No reply arrived within 30 seconds. The backend may be busy or unavailable."
+        : error.message;
+      setTicks(bubble, "failed", message);
+      addBubble("⚠️ " + message, "in", { error: true });
     } finally {
-      waiting = false;
+      clearTimeout(timeout);
+      pendingRequests = Math.max(0, pendingRequests - 1);
+      if (!pendingRequests) hideTyping();
       updateHint();
       input.focus();
-      if (handedOff) { queue.length = 0; updateHint(); return; }
-      processQueue();
     }
   }
 
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
+  form.addEventListener("submit", event => {
+    event.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    input.value = '';
+    input.value = "";
     if (handedOff) {
-      addBubble(text, 'out');
-      addSystem('This number is locked by the bot. Start a "↻ New chat" to get replies.');
+      addBubble(text, "out");
+      addSystem('This conversation is handed to staff. Press "↻ New chat" to start another demo.');
       return;
     }
-    const el = addBubble(text, 'out');
-    queue.push({ text, el });
-    updateHint();
-    processQueue();
+    const bubble = addBubble(text, "out");
+    // Start every POST immediately. The Worker buffers them under one session
+    // and the second response (202) does not create a duplicate chat reply.
+    void sendToWorker(text, bubble, conversationEpoch, SESSION_ID);
   });
 
   function startConversation(phone) {
+    conversationEpoch += 1;
     CUSTOMER_PHONE = phone;
-    handedOff = false; waiting = false; queue.length = 0;
+    SESSION_ID = sessionFor(phone);
+    handedOff = false;
     hideTyping();
-    chat.querySelectorAll('.msg, .typing').forEach(n => n.remove());
+    chat.querySelectorAll(".msg, .typing").forEach(node => node.remove());
     footerPhone.textContent = prettyPhone(phone);
     updateHint();
-    fetchMine().then(m => { baseline = m.length; status.textContent = 'online'; })
-               .catch(err => { status.textContent = 'connecting…'; console.warn('[init]', err.message); });
     input.focus();
   }
 
-  document.getElementById('newchat').addEventListener('click', () => {
+  document.getElementById("newchat").addEventListener("click", () => {
     startConversation(freshPhone());
-    addSystem(`New conversation as ${prettyPhone(CUSTOMER_PHONE)}`);
+    addSystem("New conversation as " + prettyPhone(CUSTOMER_PHONE));
   });
 
   startConversation(CUSTOMER_PHONE);
